@@ -1,0 +1,6 @@
+controller:
+  image: localhost/ds-mutate-webhook-job
+  tag: latest
+
+webhook:
+  failurePolicy: Ignore

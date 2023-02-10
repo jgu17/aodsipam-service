@@ -1,0 +1,23 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ds-mutate-webhook-job
+rules:
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["*"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ds-mutate-webhook-job
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ds-mutate-webhook-job
+subjects:
+  - kind: ServiceAccount
+    name: ds-mutate-webhook-job
+    namespace: {{ .Release.Namespace }}

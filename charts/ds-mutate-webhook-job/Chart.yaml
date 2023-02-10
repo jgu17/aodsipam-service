@@ -1,0 +1,4 @@
+apiVersion: v1
+name: ds-mutate-webhook-job
+description: Mutates Daemonset to update rolling update stragey
+version: 0.0.1
