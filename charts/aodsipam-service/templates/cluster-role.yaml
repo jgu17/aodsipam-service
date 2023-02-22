@@ -1,0 +1,111 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aodsipam-service
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["*"]
+- apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+    - events
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
+  - ipam.metal3.io
+  resources:
+  - ipaddresses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ipam.metal3.io
+  resources:
+  - ipaddresses/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ipam.metal3.io
+  resources:
+  - ipaddresses/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ipam.metal3.io
+  resources:
+  - ipclaims
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ipam.metal3.io
+  resources:
+  - ipclaims/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ipam.metal3.io
+  resources:
+  - ipclaims/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ipam.metal3.io
+  resources:
+  - ippools
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ipam.metal3.io
+  resources:
+  - ippools/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ipam.metal3.io
+  resources:
+  - ippools/status
+  verbs:
+  - get
+  - patch
+  - update
+  
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aodsipam-service
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aodsipam-service
+subjects:
+  - kind: ServiceAccount
+    name: aodsipam-service
+    namespace: {{ .Release.Namespace }}

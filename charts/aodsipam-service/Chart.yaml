@@ -1,0 +1,4 @@
+apiVersion: v1
+name: aodsipam-service
+description: aodsipam-service
+version: 0.0.1

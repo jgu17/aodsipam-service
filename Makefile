@@ -1,6 +1,6 @@
 # IMG_TAG and IMG_REPO are not consumed by deployment, only by chart and image build. Please rebuild the chart with required parameters
 IMG_TAG ?= latest
-IMG_REPO ?= localhost/ds-mutate-webhook-job
+IMG_REPO ?= localhost/aodsipam-service
 
 IMG := $(IMG_REPO):$(IMG_TAG)
 
@@ -9,13 +9,13 @@ HELM_REGISTRY ?= nccachepublicacr.azurecr.io
 HELM_PREFIX ?= helm
 HELM_REMOTE := $(HELM_REGISTRY)/$(HELM_PREFIX)
 CHART_DIR := $(shell pwd)/charts
-HELM_CHART_NAME := ds-mutate-webhook-job
+HELM_CHART_NAME := aodsipam-service
 HELM_CHART_DIR := $(CHART_DIR)/$(HELM_CHART_NAME)
 HELM_CHART_URL := $(HELM_REMOTE)/$(HELM_CHART_NAME)
 CHART_VERSION ?= $(shell yq e '.version' $(HELM_CHART_DIR)/Chart.yaml || echo NA)
 HELM_CHART_PACKAGE := $(CHART_DIR)/$(HELM_CHART_NAME)-$(CHART_VERSION).tgz
-WEBHOOK_HELM_CHART_DIR := $(CHART_DIR)/ds-mutate-webhook-job
-HELM_RELEASE_NAMESPACE ?= nc-system
+WEBHOOK_HELM_CHART_DIR := $(CHART_DIR)/aodsipam-service
+HELM_RELEASE_NAMESPACE ?= op
 
 
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)

@@ -23,5 +23,6 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532
-
+# Expose port 8080 to the outside world
+EXPOSE 8080
 ENTRYPOINT ["/manager"]
