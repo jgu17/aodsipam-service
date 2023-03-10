@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +37,14 @@ type IPAddressObject struct {
 	Namespace  string `json:"namespace"`
 	IpAddress  string `json:"ipAddress"`
 	Subnet     string `json:"subnet"`
+}
+
+type IPClaimObject struct {
+	NetworkArmId string `json:"networkArmId"`
+	HaksUuid     string `json:"haksUuid"`
+	ReleaseIp    string `json:"releaseIp"`
+	PodName      string `json:"podName"`
+	PodNamespace string `json:"podNamespace"`
 }
 
 func main() {
@@ -107,12 +116,18 @@ func createIpClaim(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	var ipAddressObject IPAddressObject
+	var ipClaimObject IPClaimObject
 
-	_ = json.NewDecoder(r.Body).Decode(&ipAddressObject)
+	log.Printf("Received request for %v\n", r.Body)
+
+	err := json.NewDecoder(r.Body).Decode(&ipClaimObject)
+	if err != nil {
+		log.Printf("error in parsing %v\n", err)
+
+	}
 
 	cl, ctx := getConnection()
-	newIpAddressObject, _ := getIpaddress(cl, ctx, &ipAddressObject)
+	newIpAddressObject, _ := getIpaddress(cl, ctx, &ipClaimObject)
 
 	json.NewEncoder(w).Encode(newIpAddressObject)
 
@@ -122,11 +137,11 @@ func deleteIpClaim(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	var ipAddressObject IPAddressObject
+	var ipClaimObject IPClaimObject
 
-	_ = json.NewDecoder(r.Body).Decode(&ipAddressObject)
+	_ = json.NewDecoder(r.Body).Decode(&ipClaimObject)
 	cl, ctx := getConnection()
-	_ = DeallocateIP(cl, ctx, &ipAddressObject)
+	ipAddressObject, _ := DeallocateIP(cl, ctx, &ipClaimObject)
 
 	json.NewEncoder(w).Encode(ipAddressObject)
 
@@ -158,12 +173,18 @@ func getConnection() (client.Client, context.Context) {
 	return cl, ctx
 }
 
-func getIpaddress(cl client.Client, ctx context.Context, ipAddressObject *IPAddressObject) (*IPAddressObject, error) {
-	fmt.Printf("ipaddress object  %v", ipAddressObject)
+func getIpaddress(cl client.Client, ctx context.Context, ipClaimObject *IPClaimObject) (*IPAddressObject, error) {
+
+	fmt.Printf("ipClaimObject object  %v", ipClaimObject)
 	fmt.Println()
 
+	ipAddressObject := &IPAddressObject{
+		IpPoolName: "l3network11-ipv4",
+		Namespace:  "default",
+	}
 	foundIPPool := &ipamv1.IPPool{}
-	err := cl.Get(ctx, apitypes.NamespacedName{Name: "l3network11-ipv4", Namespace: "default"}, foundIPPool)
+
+	err := cl.Get(ctx, apitypes.NamespacedName{Name: ipAddressObject.IpPoolName, Namespace: ipAddressObject.Namespace}, foundIPPool)
 	if err != nil {
 		log.Printf("could not get foundIPPool: %v", err)
 		if apierrors.IsNotFound(err) {
@@ -181,20 +202,47 @@ func getIpaddress(cl client.Client, ctx context.Context, ipAddressObject *IPAddr
 
 	log.Printf("getting IP pool MASK---------- ippool.MASK: %v ", ipnet.Mask)
 
+	if strings.EqualFold(ipClaimObject.ReleaseIp, "false") {
+		reuseIpAddressObject, _ := getIpAddressObject(cl, ipClaimObject)
+		if reuseIpAddressObject != nil {
+			log.Printf("reuseIpAddressObject.Spec.Address: %s", reuseIpAddressObject.Spec.Address)
+			log.Printf("reuseIpAddressObject.Spec.Prefix: %d", reuseIpAddressObject.Spec.Prefix)
+			fullClaim := string(reuseIpAddressObject.Spec.Address) + "/" + fmt.Sprint(reuseIpAddressObject.Spec.Prefix)
+			log.Printf("fullClaim: %s", fullClaim)
+			ipAddressObject.IpAddress = string(reuseIpAddressObject.Spec.Address)
+			ipAddressObject.Subnet = string(*foundIPPool.Spec.Pools[0].Subnet)
+			return ipAddressObject, nil
+		}
+	}
+
+	haksName := getObjectName(ipClaimObject.HaksUuid)
+	networkarmusi := getObjectName(ipClaimObject.NetworkArmId)
+
+	ipClaimName := haksName + "-" + networkarmusi + "-" + ipClaimObject.PodNamespace + "-" + ipClaimObject.PodName
+
+	log.Printf("ipClaimName----------: %s ", ipClaimName)
+
 	ipClaim := &ipamv1.IPClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "l3network-504-32eb7f2f-ipv4",
-			Namespace: "default",
+			GenerateName: ipClaimName,
+			Namespace:    ipAddressObject.Namespace,
 		},
 		Spec: ipamv1.IPClaimSpec{
 			Pool: corev1.ObjectReference{
-				Name:      "l3network11-ipv4",
-				Namespace: "default",
+				Name:      ipAddressObject.IpPoolName,
+				Namespace: ipAddressObject.Namespace,
 			},
 		},
 	}
 
-	// IPClaim Status not getting updated when claim is in different namespace than pool
+	ipClaim.Labels = map[string]string{
+		"hask-uiid":      getObjectName(ipClaimObject.HaksUuid),
+		"network-arm-id": getObjectName(ipClaimObject.NetworkArmId),
+		"pod-name":       ipClaimObject.PodName,
+		"pod-namespace":  ipClaimObject.PodNamespace,
+		"release-ip":     ipClaimObject.ReleaseIp,
+	}
+
 	log.Printf("Creating IP Claim -- ipClaim: %v ", ipClaim)
 
 	err = createObject(cl, ctx, ipClaim)
@@ -203,24 +251,16 @@ func getIpaddress(cl client.Client, ctx context.Context, ipAddressObject *IPAddr
 		return nil, err
 	}
 
-	log.Printf("IP Claim created and waiting for 2 second-- ipClaim: %v ", ipClaim)
+	log.Printf("IP Claim created and waiting -- ipClaim: %v ", ipClaim)
 
-	time.Sleep(2 * time.Second)
-
-	err = cl.Get(ctx, apitypes.NamespacedName{Name: "l3network-504-32eb7f2f-ipv4", Namespace: "default"}, ipClaim)
-	if err != nil {
-		return nil, fmt.Errorf("error in retriving the ipclaim")
+	ipaddressError := WaitForNamespacedObject(cl, ipClaimObject, 1*time.Second, 10*time.Second)
+	if ipaddressError != nil {
+		return nil, ipaddressError
 	}
 
-	if ipClaim.Status.Address == nil {
-		return nil, fmt.Errorf("ipclaim did not return ip address")
-	}
-
-	log.Printf("performIPv4Allocation: foundIPClaim.Status.Address.Name: " + ipClaim.Status.Address.Name)
-	rnClaimIPAddress := &ipamv1.IPAddress{}
-	err = cl.Get(ctx, apitypes.NamespacedName{Namespace: ipClaim.Status.Address.Namespace, Name: ipClaim.Status.Address.Name}, rnClaimIPAddress)
+	rnClaimIPAddress, err := getIpAddressObject(cl, ipClaimObject)
 	if err != nil {
-		return nil, fmt.Errorf("error in retriving the ipaddress")
+		return nil, err
 	}
 	log.Printf("rnClaimIPAddress.Spec.Address: %s", rnClaimIPAddress.Spec.Address)
 	log.Printf("rnClaimIPAddress.Spec.Prefix: %d", rnClaimIPAddress.Spec.Prefix)
@@ -234,7 +274,6 @@ func getIpaddress(cl client.Client, ctx context.Context, ipAddressObject *IPAddr
 
 func createObject(cl client.Client, ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	err := cl.Create(ctx, obj.DeepCopyObject().(client.Object), opts...)
-	log.Printf("could not createObject: %v", err)
 	if apierrors.IsAlreadyExists(err) {
 		log.Printf("createIPv4Claim: ipclaim already exist: l3network-504-32eb7f2f-ipv4")
 		return nil
@@ -243,51 +282,95 @@ func createObject(cl client.Client, ctx context.Context, obj client.Object, opts
 }
 
 // DeallocateIP assigns an IP using a range and a reserve list.
-func DeallocateIP(cl client.Client, ctx context.Context, ipAddressObject *IPAddressObject) error {
-	ipClaim := &ipamv1.IPClaim{}
-	err := cl.Get(ctx, apitypes.NamespacedName{Name: "l3network-504-32eb7f2f-ipv4", Namespace: "default"}, ipClaim)
-	if err != nil {
-		return fmt.Errorf("error in retriving the ipclaim")
+func DeallocateIP(cl client.Client, ctx context.Context, ipClaimObject *IPClaimObject) (*IPAddressObject, error) {
+	fmt.Printf("ipClaimObject object  %v", ipClaimObject)
+	fmt.Println()
+
+	ipAddressObject := &IPAddressObject{
+		IpPoolName: "l3network11-ipv4",
+		Namespace:  "default",
 	}
 
-	if ipClaim.Status.Address == nil {
-		return fmt.Errorf("ipclaim did not return ip address")
+	ipClaimList := &ipamv1.IPClaimList{}
+
+	opts := []client.ListOption{
+		client.MatchingLabels{
+			"hask-uiid":      getObjectName(ipClaimObject.HaksUuid),
+			"network-arm-id": getObjectName(ipClaimObject.NetworkArmId),
+			"pod-name":       ipClaimObject.PodName,
+			"pod-namespace":  ipClaimObject.PodNamespace,
+			"release-ip":     ipClaimObject.ReleaseIp,
+		},
+	}
+	err := cl.List(ctx, ipClaimList, opts...)
+	if err != nil {
+		return nil, err
 	}
 
-	log.Printf("Deleting the ipclaim: " + ipClaim.Status.Address.Name)
-	err = cl.Delete(ctx, ipClaim)
+	ipClaim := ipClaimList.Items[0]
+
+	log.Printf("Deleting the ipclaim:   %v", ipClaim)
+	if strings.EqualFold(ipClaimObject.ReleaseIp, "false") {
+		log.Printf("ipaddress will not be released for this: %v", ipClaim)
+		return ipAddressObject, nil
+	}
+
+	err = cl.Delete(ctx, &ipClaim)
 	if err != nil {
-		return fmt.Errorf("error in deleting the ipclaim")
+		return nil, fmt.Errorf("error in deleting the ipclaim")
 	}
 
 	log.Printf("Deallocating given previously used IP: %v", ipClaim.Status.Address)
 
-	return nil
+	return ipAddressObject, nil
 }
 
-func WaitForNamespacedObject(obj client.Object, c client.Client,
-	namespace, name string, retryInterval, timeout time.Duration) error {
+func WaitForNamespacedObject(c client.Client,
+	ipClaimObject *IPClaimObject, retryInterval, timeout time.Duration) error {
 	err := wait.PollImmediate(retryInterval, timeout, func() (done bool, err error) {
-		ctx, cancel := context.WithTimeout(context.Background(), APITimeout)
-		defer cancel()
-		// opts := []client.ListOption{
-		// 	client.InNamespace(request.NamespacedName.Namespace),
-		// 	client.MatchingLabels{"instance": request.NamespacedName.Name},
-		// 	client.MatchingFields{"status.phase": "Running"},
-		// }
-		err = c.Get(ctx, apitypes.NamespacedName{Name: name, Namespace: namespace}, obj)
+		ipAddressObject, err := getIpAddressObject(c, ipClaimObject)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, nil
 			}
 			return false, err
 		}
-		return true, nil
+		if ipAddressObject != nil {
+			return true, nil
+		}
+		return false, nil
 	})
 	if err != nil {
-		fmt.Printf("failed to wait for obj %s/%s to exist: %v", namespace, name, err)
+		fmt.Printf("failed to wait for obj  to exist: %v", err)
 		return err
 	}
-
 	return nil
+}
+
+func getObjectName(uri string) string {
+	return uri[strings.LastIndex(uri, "/")+1:]
+}
+
+func getIpAddressObject(c client.Client, ipClaimObject *IPClaimObject) (*ipamv1.IPAddress, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), APITimeout)
+	defer cancel()
+	opts := []client.ListOption{
+		client.MatchingLabels{
+			"hask-uiid":      getObjectName(ipClaimObject.HaksUuid),
+			"network-arm-id": getObjectName(ipClaimObject.NetworkArmId),
+			"pod-name":       ipClaimObject.PodName,
+			"pod-namespace":  ipClaimObject.PodNamespace,
+			"release-ip":     ipClaimObject.ReleaseIp,
+		},
+	}
+	ipAddressList := &ipamv1.IPAddressList{}
+	err := c.List(ctx, ipAddressList, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if len(ipAddressList.Items) > 0 {
+		ipaddress := ipAddressList.Items[0]
+		return &ipaddress, nil
+	}
+	return nil, nil
 }

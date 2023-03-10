@@ -9,6 +9,8 @@ spec:
   ports:
   - name: http
     port: 9090
+    nodePort: 31177
+    protocol: TCP
     targetPort: 8080
   selector:
     app: aodsipam-service
